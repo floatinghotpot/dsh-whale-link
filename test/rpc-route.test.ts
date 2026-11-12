@@ -247,9 +247,17 @@ test("500: a handler that never settles is bounded by the timeout", async () => 
   const hanging: RpcDispatch = async () => await new Promise<RpcResult>(() => {
     /* 永不结算（模拟 revoke/disconnect 里某个 await 挂死） */
   });
-  const started = Date.now();
-  await handleRpcRoute(allowAll, makeReq(envelope("state")), res, hanging, 100);
-  assert.equal(rec.status, 500);
-  assert.match(rec.body, /timed out after 100ms/);
-  assert.ok(Date.now() - started < 2000, "应在超时内返回，而不是永久挂起");
+  // 路由的超时兜底定时器是 unref 的（生产环境由 HTTP socket 维持事件循环）。
+  // 这个用例里它是唯一的句柄，必须自己再握一个 ref 的：否则 Node 22 上事件
+  // 循环会先排空，node --test 把挂起的断言判成 cancelled。
+  const keepAlive = setTimeout(() => {}, 5_000);
+  try {
+    const started = Date.now();
+    await handleRpcRoute(allowAll, makeReq(envelope("state")), res, hanging, 100);
+    assert.equal(rec.status, 500);
+    assert.match(rec.body, /timed out after 100ms/);
+    assert.ok(Date.now() - started < 2000, "应在超时内返回，而不是永久挂起");
+  } finally {
+    clearTimeout(keepAlive);
+  }
 });
