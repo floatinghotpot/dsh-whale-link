@@ -1,0 +1,76 @@
+{
+  "name": "dsh-whale-link",
+  "version": "0.16.0",
+  "description": "WhaleLink remote access for DSH — reach your agent from any browser or the WhaleLink app, no public IP, end-to-end encrypted.",
+  "license": "MIT",
+  "author": "Liming Xie",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/floatinghotpot/dsh-whale-link.git"
+  },
+  "homepage": "https://github.com/floatinghotpot/dsh-whale-link#readme",
+  "bugs": {
+    "url": "https://github.com/floatinghotpot/dsh-whale-link/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "remote-access",
+    "whalelink",
+    "e2ee"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "default": "./client.js"
+    },
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "client.js",
+    "cordis.patch.yml",
+    "locale",
+    "docs",
+    "icon.svg"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "rdsh-gateway": "0.18.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.json",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "icon": "./icon.svg"
+}

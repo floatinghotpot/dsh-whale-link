@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "鲸语通 WhaleLink",
+    "description": "用任意浏览器或「鲸语通」App 远程访问你的 DSH 智能体——不需要公网 IP，全程端到端加密。",
+    "detail": "docs/DETAIL.zh.md"
+  }
+}

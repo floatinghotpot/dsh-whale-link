@@ -11,3 +11,6 @@ dist/
 # test / tooling residue
 coverage/
 *.tsbuildinfo
+
+# packed tarballs
+*.tgz

@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "WhaleLink",
+    "description": "Remote access to your DSH agent from any browser or the WhaleLink app — no public IP, end-to-end encrypted.",
+    "detail": "docs/DETAIL.md"
+  }
+}
