@@ -10,9 +10,7 @@
 
 ## Status
 
-Pre-release, `0.x`. `0.16.0` is the first standalone release; the plugin is functionally equivalent to `dsh-web-remote` `0.15.0`.
-
-> The npm name `dsh-whale-link` currently holds a **placeholder** package that throws on purpose. Until `0.16.0` is published, install from a local checkout — see [Development](#development).
+Pre-release (`0.x`). Features and internals may still change before `1.0`; the plugin tracks the DSH plugin API and the `rdsh-gateway` runtime it depends on.
 
 ## Features
 

@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file. Versions
 follow [Semantic Versioning](https://semver.org/).
 
-## [0.16.0] — 2026-11-12
+## [0.16.0] — unreleased
 
 First standalone release under the WhaleLink name.
 
