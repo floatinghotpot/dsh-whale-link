@@ -1,5 +1,7 @@
 # WhaleLink for DSH
 
+[![License](https://img.shields.io/github/license/floatinghotpot/dsh-whale-link)](LICENSE) [![CI](https://github.com/floatinghotpot/dsh-whale-link/workflows/CI/badge.svg)](https://github.com/floatinghotpot/dsh-whale-link/actions/workflows/ci.yml) [![npm Version](https://img.shields.io/npm/v/dsh-whale-link)](https://www.npmjs.com/package/dsh-whale-link) [![npm Downloads](https://img.shields.io/npm/dm/dsh-whale-link)](https://www.npmjs.com/package/dsh-whale-link)
+
 **Other languages**: [简体中文](README.zh.md)
 
 ## What is WhaleLink

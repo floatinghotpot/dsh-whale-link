@@ -1,5 +1,7 @@
 # WhaleLink（鲸语通）DSH 插件
 
+[![License](https://img.shields.io/github/license/floatinghotpot/dsh-whale-link)](LICENSE) [![CI](https://github.com/floatinghotpot/dsh-whale-link/workflows/CI/badge.svg)](https://github.com/floatinghotpot/dsh-whale-link/actions/workflows/ci.yml) [![npm Version](https://img.shields.io/npm/v/dsh-whale-link)](https://www.npmjs.com/package/dsh-whale-link) [![npm Downloads](https://img.shields.io/npm/dm/dsh-whale-link)](https://www.npmjs.com/package/dsh-whale-link)
+
 **其他语言**：[English](README.md)
 
 ## 鲸语通是什么
