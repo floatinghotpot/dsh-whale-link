@@ -15,9 +15,10 @@ First standalone release under the WhaleLink name.
 - Optional host access code, on/off at any time.
 - Diagnostics & repair: lock holder, other plugin installs on this machine, force unlock.
 - The plugin pins DSH's directory picker to the in-app browser, so directory picking works from a remote browser.
+- A restart notice at the top of the panel — plus one automatic diagnostics run — when the host's directory picker is still the native OS dialog (the state right after installing while DSH is running).
 
 ### Notes
 
 - Functionally equivalent to `dsh-web-remote` `0.15.0`.
-- Runs against `rdsh-gateway` `^0.18.0`.
+- Runs against `rdsh-gateway` `0.18.0` (pinned exact in `package.json`).
 - Must **not** be installed beside `dsh-web-remote` in the same DSH profile.

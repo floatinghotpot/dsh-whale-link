@@ -6,10 +6,9 @@ you may not use the name or the logo to brand derivative products, or to imply
 endorsement, without explicit permission.
 
 **Derivation.** This package is the WhaleLink-branded distribution of the DSH
-remote-access plugin. The same implementation is also published as
-`dsh-web-remote` from the remote-dsh project (MIT, same copyright holder). Both
-names describe one plugin: install one of them, never both in the same DSH
-profile.
+remote-access plugin. It was previously published as `dsh-web-remote`; both
+names describe one plugin. Uninstall the old package before installing this
+one, and never install both in the same DSH profile.
 
 **Third-party marks.** Any third-party names or logos shown in the
 documentation or in the plugin UI remain the property of their respective
