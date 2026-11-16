@@ -31,7 +31,7 @@
 
 | | |
 |---|---|
-| DSH | **DSH Desktop**，或支持插件、命令行启动的 DSH（`dsh web`） |
+| DSH | **DSH Desktop**，或支持插件、命令行启动的 DSH（`dsh web`）——**DSH `0.2.2-rc.2` 及以上**（[逐版本兼容矩阵](docs/COMPATIBILITY.zh.md)） |
 | 服务器 | 鲸语通托管服务（面板已预填 `https://rdsh.cn`），或你自己部署的服务——见 [remote-dsh](https://github.com/floatinghotpot/remote-dsh) |
 | `pnpm` | 仅当通过 DSH 的**插件**界面安装时需要 |
 

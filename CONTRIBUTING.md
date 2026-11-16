@@ -26,6 +26,12 @@ pnpm test      # node --test
 
 The browser half (`client.js`) is a hand-written `window.__ModuleLoader__` module — there is no bundler, so edit it directly and keep it valid as-is.
 
+## DSH compatibility
+
+- `package.json` → `engines.dsh` is the enforced floor: raise it only when a release really stops working on the older DSH (an API it needs was removed or renamed), never merely because a version was not tested there.
+- Update `docs/COMPATIBILITY.md` and `docs/COMPATIBILITY.zh.md` in the same change. `pnpm test` fails when the current `<major>.<minor>.x` row is missing or disagrees with `package.json`.
+- List a DSH version as tested only after booting DSH with this plugin on it.
+
 ## Pull requests
 
 - **Surgical changes**: touch only what the fix needs; no drive-by reformatting.

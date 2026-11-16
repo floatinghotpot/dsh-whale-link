@@ -31,7 +31,7 @@ WhaleLink (鲸语通) is a **voice assistant**: talk to your agents instead of t
 
 | | |
 |---|---|
-| DSH | **DSH Desktop**, or a command-line DSH (`dsh web`) with plugin support |
+| DSH | **DSH Desktop**, or a command-line DSH (`dsh web`) with plugin support — **DSH `0.2.2-rc.2` or newer** ([per-release matrix](docs/COMPATIBILITY.md)) |
 | Server | The hosted WhaleLink service (the panel pre-fills `https://rdsh.cn`), or a service you deploy yourself — see [remote-dsh](https://github.com/floatinghotpot/remote-dsh) |
 | `pnpm` | Only needed if you install through DSH's **Plugins** screen |
 
