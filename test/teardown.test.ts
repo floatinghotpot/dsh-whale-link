@@ -18,11 +18,14 @@ interface FakeWebServer {
   register: () => () => void;
 }
 
-function makeCtx(onRegister: () => void): Context {
+function makeCtx(onRegister: () => void, onProviderDisposed: () => void = () => {}): Context {
   const ctx = new Context();
   const webServer: FakeWebServer = { port: 0, register: () => { onRegister(); return () => {}; } };
   ctx.provide("webServer", webServer);
-  ctx.provide("connection", {});
+  ctx.provide("connection", {
+    createPeer: () => ({ principal: { kind: "owner" } }),
+    authentication: { register: () => () => { onProviderDisposed(); } },
+  });
   return ctx;
 }
 
@@ -35,23 +38,28 @@ test("真实 cordis：fiber.dispose() 执行收尾 disposer 并复位单例", as
     type ApplyCtx = Parameters<typeof apply>[0];
 
     let registerCount = 0;
+    let providerDisposals = 0;
 
-    const ctx1 = makeCtx(() => { registerCount += 1; });
+    const ctx1 = makeCtx(() => { registerCount += 1; }, () => { providerDisposals += 1; });
     apply(ctx1 as unknown as ApplyCtx);
     assert.equal(registerCount, 1, "第一个实例注册 RPC 路由");
+    assert.equal(providerDisposals, 0, "provider 在 apply 阶段不撤销");
 
     const ctx2 = makeCtx(() => { registerCount += 1; });
     apply(ctx2 as unknown as ApplyCtx);
     assert.equal(registerCount, 1, "第二个实例被单例拦住，零注册");
 
-    // 关键断言：真实 fiber.dispose() 会执行收尾 disposer → 复位单例。
+    // 关键断言：真实 fiber.dispose() 会执行收尾 disposer → 复位单例，
+    // 并撤销归插件 fiber 的凭据 provider。
     await ctx1.fiber.dispose();
+    assert.equal(providerDisposals, 1, "fiber dispose 撤销凭据 provider（注册归属插件 fiber）");
 
-    const ctx3 = makeCtx(() => { registerCount += 1; });
+    const ctx3 = makeCtx(() => { registerCount += 1; }, () => { providerDisposals += 1; });
     apply(ctx3 as unknown as ApplyCtx);
     assert.equal(registerCount, 2, "dispose 后单例已复位，第三个实例重新注册");
 
     await ctx3.fiber.dispose();
+    assert.equal(providerDisposals, 2, "第三个实例的 provider 同样随 fiber 撤销");
   } finally {
     process.env.HOME = prevHome;
     await rm(home, { recursive: true, force: true });

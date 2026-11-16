@@ -22,7 +22,10 @@ interface EffectEntry {
 }
 
 interface MockCtx {
-  connection: { authenticatedUrl?: unknown };
+  connection: {
+    createPeer: () => { principal: { kind: string } };
+    authentication: { register: () => () => void };
+  };
   webServer: { port: number; register: () => () => void };
   effect: (cb: () => unknown, label: string) => void;
   on: (event: string, cb: () => void) => void;
@@ -35,7 +38,10 @@ function makeCtx(): MockCtx {
   const effects: EffectEntry[] = [];
   const listeners: string[] = [];
   return {
-    connection: {},
+    connection: {
+      createPeer: () => ({ principal: { kind: "owner" } }),
+      authentication: { register: () => () => {} },
+    },
     webServer: { port: 52247, register: () => () => {} },
     effect(cb: () => unknown, label: string): void {
       effects.push({ label, disposer: cb() });
@@ -63,7 +69,9 @@ test("apply 是单例：第二次零注册，收尾 disposer 复位后重新接�
     apply(ctx1);
     apply(ctx2);
 
-    assert.equal(ctx1.effects.length, 2, "第一个实例注册 RPC 路由 + 收尾两个 effect");
+    assert.equal(ctx1.effects.length, 3, "第一个实例注册凭据 provider + RPC 路由 + 收尾三个 effect");
+    assert.ok(ctx1.effects.some((e) => e.label.includes("owner credential provider")), "凭据 provider 经 ctx.effect 注册");
+    assert.ok(ctx1.effects.some((e) => e.label.includes("RPC route")), "RPC 路由经 ctx.effect 注册");
     assert.ok(ctx1.effects.some((e) => e.label.includes("teardown")), "第一个实例注册收尾 effect");
     assert.equal(ctx1.listeners.filter((e) => e === "dispose").length, 0, "不再注册 dispose 事件监听");
     assert.equal(ctx2.effects.length, 0, "第二个实例零注册（effect）");
@@ -76,7 +84,7 @@ test("apply 是单例：第二次零注册，收尾 disposer 复位后重新接�
 
     const ctx3 = makeCtx();
     apply(ctx3);
-    assert.equal(ctx3.effects.length, 2, "收尾复位后第三个实例重新注册");
+    assert.equal(ctx3.effects.length, 3, "收尾复位后第三个实例重新注册");
   } finally {
     process.env.HOME = prevHome;
     await rm(home, { recursive: true, force: true });

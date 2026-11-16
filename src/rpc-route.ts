@@ -1,4 +1,4 @@
-// Synced from remote-dsh/packages/web-remote@0.15.0
+// Originated in remote-dsh/packages/web-remote@0.15.0; the DSH 0.2.2+ authentication here is this edition's.
 /**
  * The `/remote-access` HTTP route: the browser half's unary RPC channel.
  *
@@ -9,9 +9,14 @@
  * whole plugin tree at boot (upstream regression, deepseek-harness discussion
  * #5926). The wire contract is deliberately the connection service's own —
  * `POST <channel>/<endpoint>` carrying a `client-request` envelope and
- * answering with a `server-response` envelope, behind the same official
- * Host/Origin + browser-session fence — so the browser half is unchanged and
- * one code path serves both dsh `0.1.2-rc.1` and `0.1.5-rc.2`.
+ * answering with a `server-response` envelope — so the browser half is
+ * unchanged.
+ *
+ * Admission belongs to the caller: the route is registered with WebServer's
+ * `auth: 'required'`, which DSH resolves through Connection's
+ * `webserver/authorize` (source fence plus credential providers) before this
+ * handler runs. Since dsh `0.2.2-rc.2` there is no `connection.requestRejection`
+ * to call here, and this module must not widen the route's admission policy.
  *
  * The status semantics mirror `dsh-client-connection`'s `rpcFetchHandler`:
  * 404 wrong method/endpoint, 415 wrong content type, 400 unparsable body,
@@ -49,18 +54,12 @@ const INVALID_REQUEST_RPC_ID = "invalid-request";
 /** Endpoint segment shape the connection service accepts. */
 const ENDPOINT_SEGMENT_PATTERN = /^[A-Za-z0-9_$.-]+$/;
 
-/** The slice of the DSH connection service this plugin uses. */
-export interface ConnectionService {
-  /** Official Host/Origin fence + browser-session check, shared with DSH's own routes. */
-  requestRejection(request: Request): number | undefined;
-  /** 0.1.2+ in-process launch-token exchange; absent on older dsh. */
-  authenticatedUrl?: (baseUrl: string) => string;
-}
-
 /** One prefix route as the DSH web server (`webServer.register`) accepts it. */
 export interface WebServerRoute {
   kind: "prefix";
   path: string;
+  /** Admit only a live authenticated Peer; DSH defaults to `required` as well. */
+  auth: "required";
   handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 }
 
@@ -130,16 +129,14 @@ async function readBody(req: IncomingMessage, res: ServerResponse): Promise<Buff
 }
 
 /**
- * Serve one call on the browser half's RPC channel: the official Host/Origin +
- * browser-session fence first, then the connection service's own status
- * semantics.
- * @param connection - connection service providing the official fence.
+ * Serve one admitted call on the browser half's RPC channel, using the
+ * connection service's own status semantics.
  * @param req - incoming node request.
  * @param res - node response this handler owns to completion.
  * @param dispatch - business endpoint switch of the channel.
+ * @param timeoutMs - upper bound for one business call.
  */
 export async function handleRpcRoute(
-  connection: ConnectionService,
   req: IncomingMessage,
   res: ServerResponse,
   dispatch: RpcDispatch,
@@ -148,23 +145,6 @@ export async function handleRpcRoute(
   /* node:http always sets url/method on server requests; the fallbacks keep the
   handler total for hand-built requests. */
   const url = new URL(req.url ?? `${RPC_CHANNEL}/`, "http://dsh.internal");
-  /* String-valued headers only: the fence reads Host/Origin/Cookie, and
-  set-cookie style array headers never appear on a request. */
-  const headers: Record<string, string> = {};
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (typeof value === "string") headers[key] = value;
-  }
-
-  // The body is deliberately not read yet: an unauthenticated caller is
-  // rejected before any buffering happens.
-  const rejection = connection.requestRejection(
-    new Request(`${url.origin}${url.pathname}`, { method: req.method ?? "POST", headers }),
-  );
-  if (rejection !== undefined) {
-    res.writeHead(rejection, { "content-type": "text/plain" });
-    res.end(rejection === 401 ? "unauthorized" : "forbidden");
-    return;
-  }
 
   const endpoint = endpointFromPath(url.pathname);
   if ((req.method ?? "GET") !== "POST" || endpoint === undefined) {
