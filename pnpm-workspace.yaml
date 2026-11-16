@@ -1,0 +1,4 @@
+# pnpm 12 minimum release age: allow the freshly published gateway this
+# release depends on. Remove once rdsh-gateway@0.18.1 ages past the policy.
+minimumReleaseAgeExclude:
+  - rdsh-gateway@0.18.1

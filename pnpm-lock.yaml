@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       rdsh-gateway:
-        specifier: 0.18.0
-        version: 0.18.0
+        specifier: 0.18.1
+        version: 0.18.1
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5
@@ -45,8 +45,8 @@ packages:
   '@types/node@22.20.5':
     resolution: {integrity: sha512-U2+DNr+wSjpsTS/wZGYHq7GcwfuSmKiKvoPvK22zwTlRhU91yOniN4qRR5KhIjvif7ysw/dz/hKmfDH0Ris4aA==}
 
-  rdsh-gateway@0.18.0:
-    resolution: {integrity: sha512-EjLpPHn5NHEdGjSOum7lrKIcegjNDIhaamn8xoJpNP7L1h95/X2fpKRzIA0Ezllt72esCOfyd8x4Cp0nmDDc9A==}
+  rdsh-gateway@0.18.1:
+    resolution: {integrity: sha512-B3vBlqj53gpoGm9hubalg4pSDZnbC+mkM871PLeq4jHp1x5B+k5ki2Q2ijNfs6X3HdG5nLL3TSuiYmp2BA6BxQ==}
     engines: {node: '>=22'}
 
   rdsh-tunnel@0.3.0:
@@ -88,7 +88,7 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  rdsh-gateway@0.18.0:
+  rdsh-gateway@0.18.1:
     dependencies:
       rdsh-tunnel: 0.3.0
       ws: 8.22.2
