@@ -14,9 +14,16 @@ WhaleLink (鲸语通) is a **voice assistant**: talk to your agents instead of t
 - **LAN-direct first.** On the same network it connects directly, for lower latency and less data; elsewhere it falls back to encrypted relay automatically — no config juggling.
 - **Reachable from anywhere.** The host opens an outbound tunnel that traverses NAT and firewalls (outbound only), so your phone can reach your machine on any network.
 
+<p>
+  <img src="media/list-en.png" width="386" alt="WhaleLink app: every joined host in one list">
+  <img src="media/app-en.png" width="260" alt="WhaleLink app: speak to your agent and hear the reply">
+</p>
+
 ## What this plugin is
 
 `dsh-whale-link` is the **DSH desktop plugin** for WhaleLink — the "join" half: it connects the computer running DSH to WhaleLink (a **WhaleLink** section appears in DSH's Settings). Once joined, that computer shows up in your WhaleLink **host list** alongside your other hosts, and you open it from the app or a browser. Voice input and read-aloud come from the WhaleLink app, not from this plugin.
+
+<img src="media/plugin-en.png" width="600" alt="WhaleLink panel in DSH Settings: connection status, LAN direct, access code">
 
 ## Features
 
@@ -34,6 +41,8 @@ WhaleLink (鲸语通) is a **voice assistant**: talk to your agents instead of t
 | DSH | **DSH Desktop**, or a command-line DSH (`dsh web`) with plugin support — **DSH `0.2.2-rc.2` or newer** ([per-release matrix](docs/COMPATIBILITY.md)) |
 | Server | The hosted WhaleLink service (the panel pre-fills `https://rdsh.cn`), or a service you deploy yourself — see [remote-dsh](https://github.com/floatinghotpot/remote-dsh) |
 | `pnpm` | Only needed if you install through DSH's **Plugins** screen |
+
+<img src="media/architecture-en.png" width="560" alt="WhaleLink network architecture: clients, HUB, RELAY, DSH desktop plugin / agent host gateway, DSH">
 
 ## Install
 
@@ -141,24 +150,6 @@ Deleting these is the same as "never joined", but prefer **Revoke** — it also 
 - **LAN direct** listens on a separate local port (default `8442`) while joined. It is gated by a one-time ticket signed with a per-host secret; the optional access code is an additional layer.
 - **Browser half** is a hand-written `window.__ModuleLoader__` module that registers the **Settings → WhaleLink** section and talks to the server half over the plugin's own `/remote-access` RPC route.
 - **End-to-end encryption** is carried by the tunnel: the relay forwards ciphertext and cannot read sessions or files.
-
-## Migrating from the old name `dsh-web-remote`
-
-This plugin used to be called **`dsh-web-remote`**; it is now **`dsh-whale-link`**. They are one plugin with one implementation and **must not be installed into the same DSH profile**:
-
-- both patches disable `directory-picker` and insert a `directory-picker-browse` row, which the loader rejects as `duplicate loader entry id` (duplicate `directoryPicker` service) — **DSH will not start**;
-- both expose the same `/remote-access` RPC route and compete for the same machine-level `~/.rdsh/join.lock`.
-
-**If you have the old package installed, remove it first, then install the new one:**
-
-```bash
-dsh plugin --profile <name> remove dsh-web-remote
-dsh plugin --profile <name> add dsh-whale-link
-```
-
-You can also uninstall and install from DSH Desktop's plugin screens. **Restart DSH** afterwards.
-
-**No re-joining needed.** The host config and auth token live in `~/.rdsh/`, independent of the package name; after switching packages the existing host joins automatically, and the panel status and access code are preserved.
 
 ## Security notes
 

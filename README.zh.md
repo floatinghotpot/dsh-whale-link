@@ -14,9 +14,16 @@
 - **内网直连优先。** 同一网络下优先直连，延迟更低、更省流量；不在同一网络时自动走加密中转，不用来回改配置。
 - **随时随地访问。** 主机主动建立出站隧道，穿透 NAT 与防火墙（只出不进），手机在任何网络下都能安全连回自己的机器。
 
+<p>
+  <img src="media/list-zh.png" width="386" alt="鲸语通 App：接入的主机都在一个列表里">
+  <img src="media/app-zh.png" width="260" alt="鲸语通 App：说给它听，也听它说">
+</p>
+
 ## 这个插件是什么
 
 `dsh-whale-link` 是鲸语通的 **DSH 桌面端插件**——负责「接入」这一半：把运行 DSH 的这台电脑接进鲸语通（DSH 的「设置」里会多出一个 **WhaleLink** 面板）。接入之后，这台电脑就出现在鲸语通的**主机列表**里，和你的其他主机一起集中管理；用手机或浏览器都能点进去。语音输入与朗读由鲸语通 App 提供，不在本插件内。
+
+<img src="media/plugin-zh.png" width="600" alt="DSH 设置里的 WhaleLink 面板：连接状态、内网直连、访问密码">
 
 ## 功能
 
@@ -34,6 +41,8 @@
 | DSH | **DSH Desktop**，或支持插件、命令行启动的 DSH（`dsh web`）——**DSH `0.2.2-rc.2` 及以上**（[逐版本兼容矩阵](docs/COMPATIBILITY.zh.md)） |
 | 服务器 | 鲸语通托管服务（面板已预填 `https://rdsh.cn`），或你自己部署的服务——见 [remote-dsh](https://github.com/floatinghotpot/remote-dsh) |
 | `pnpm` | 仅当通过 DSH 的**插件**界面安装时需要 |
+
+<img src="media/architecture-zh.png" width="560" alt="鲸语通网络架构：客户端、HUB、RELAY、DSH 桌面版插件 / 智能体主机网关、DSH">
 
 ## 安装
 
@@ -141,24 +150,6 @@ dsh --profile <name>            # 启动该 profile（等价写法：dsh <name>�
 - **内网直连**在接入期间额外监听一个本机端口（默认 `8442`），由 per-host 密钥签名的**一次性票据**把守；访问口令是可选的额外一层。
 - **浏览器半**是手写的 `window.__ModuleLoader__` 模块，注册 **设置 → WhaleLink** 分区，并通过插件自己的 `/remote-access` RPC 路由与服务端半通信。
 - **端到端加密**由隧道承载：中转只转发密文，读不到会话内容与文件。
-
-## ⚠️ 从旧名字 `dsh-web-remote` 迁移
-
-这个插件以前叫 **`dsh-web-remote`**，现在统一为 **`dsh-whale-link`**。两者是同一个插件、同一套实现，**不能装进同一个 DSH profile**：
-
-- 两份 patch 都会禁用 `directory-picker` 并插入 `directory-picker-browse` 行，loader 会判定 `duplicate loader entry id`（`directoryPicker` 服务重复）——**DSH 无法启动**；
-- 两者暴露同一个 `/remote-access` RPC 路由，并争抢同一把机器级 `~/.rdsh/join.lock`。
-
-**已经装了旧包的，先卸旧的，再装新的：**
-
-```bash
-dsh plugin --profile <name> remove dsh-web-remote
-dsh plugin --profile <name> add dsh-whale-link
-```
-
-DSH Desktop 里也可以直接在插件界面卸载旧的、安装新的。装完**重启 DSH**。
-
-**不用重新接入。** 主机配置与授权令牌都在 `~/.rdsh/` 下，跟包名无关；换包后原来的主机仍会自动接入，面板状态和访问口令也都保留。
 
 ## 安全说明
 
