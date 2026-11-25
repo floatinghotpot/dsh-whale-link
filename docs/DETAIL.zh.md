@@ -10,7 +10,7 @@
 
 ## 兼容性
 
-本版本需要 **DSH `0.2.2-rc.2` 及以上**。更旧的 DSH 请改装 `dsh-whale-link@0.16.0`：`0.17.x` 在旧版上会停在未激活，而 `0.16.x` 在 `0.2.2-rc.2` 及以上启动即让 DSH 退出。
+本版本需要 **DSH `0.2.2-rc.2` 及以上**。它同时支持两代认证——`0.2.2-rc.x` 发布线（启动令牌换发会话 cookie）与 DSH `0.2.3`+（Connection authentication provider）——两者之间无需锁版本。更旧的 DSH 请改装 `dsh-whale-link@0.16.0`：`0.17.x` 在旧版上会停在未激活，而 `0.16.x` 在 `0.2.2-rc.2` 及以上启动即让 DSH 退出。
 
 哪个版本对应哪个 DSH：`docs/COMPATIBILITY.md`（中文 `docs/COMPATIBILITY.zh.md`）。本页会把相对链接显示成纯文本，文件就在已安装的包里。
 

@@ -30,7 +30,7 @@ The browser half (`client.js`) is a hand-written `window.__ModuleLoader__` modul
 
 - `package.json` → `engines.dsh` is the enforced floor: raise it only when a release really stops working on the older DSH (an API it needs was removed or renamed), never merely because a version was not tested there.
 - Update `docs/COMPATIBILITY.md` and `docs/COMPATIBILITY.zh.md` in the same change. `pnpm test` fails when the current `<major>.<minor>.x` row is missing or disagrees with `package.json`.
-- List a DSH version as tested only after booting DSH with this plugin on it.
+- List a DSH version as tested only after the plugin was **activated** there and `/remote-access` answered (`state` reachable). A DSH that merely boots with the plugin installed is not enough — that is how `0.17.0`'s `pending` state slipped through.
 
 ## Pull requests
 

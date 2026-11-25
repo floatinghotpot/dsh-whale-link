@@ -24,7 +24,8 @@ interface EffectEntry {
 interface MockCtx {
   connection: {
     createPeer: () => { principal: { kind: string } };
-    authentication: { register: () => () => void };
+    authenticatedUrl?: (base: string) => string;
+    requestRejection?: (request: { headers: Record<string, string | undefined> }) => 401 | 403 | undefined;
   };
   webServer: { port: number; register: () => () => void };
   effect: (cb: () => unknown, label: string) => void;
@@ -34,13 +35,21 @@ interface MockCtx {
   listeners: string[];
 }
 
-function makeCtx(): MockCtx {
+function makeCtx(shape: "provider" | "session" = "provider"): MockCtx {
   const effects: EffectEntry[] = [];
   const listeners: string[] = [];
+  // 每代都要能被 `authGenerationOf` 正确识别：provider 是点号服务（`ctx.get`），
+  // session 是 `authenticatedUrl` + `requestRejection` 两个方法。
+  const providerService = { register: () => () => {} };
   return {
     connection: {
       createPeer: () => ({ principal: { kind: "owner" } }),
-      authentication: { register: () => () => {} },
+      ...(shape === "session"
+        ? {
+            authenticatedUrl: (base: string) => `${base}/?no-token=1`,
+            requestRejection: () => undefined,
+          }
+        : {}),
     },
     webServer: { port: 52247, register: () => () => {} },
     effect(cb: () => unknown, label: string): void {
@@ -49,8 +58,8 @@ function makeCtx(): MockCtx {
     on(event: string, _cb: () => void): void {
       listeners.push(event);
     },
-    get(_name: string): unknown {
-      return undefined;
+    get(name: string): unknown {
+      return shape === "provider" && name === "connection.authentication" ? providerService : undefined;
     },
     effects,
     listeners,
@@ -85,6 +94,45 @@ test("apply 是单例：第二次零注册，收尾 disposer 复位后重新接�
     const ctx3 = makeCtx();
     apply(ctx3);
     assert.equal(ctx3.effects.length, 3, "收尾复位后第三个实例重新注册");
+
+    // 复位单例，让后续用例（session 态）能接管。
+    const teardown3 = ctx3.effects.find((e) => e.label.includes("teardown"))!.disposer as () => Promise<void>;
+    await teardown3();
+  } finally {
+    process.env.HOME = prevHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("session 态同样是单例：2 个 effect，收尾 disposer 复位后重新接管", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rdsh-singleton-session-"));
+  const prevHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const { apply } = await import("../src/index.ts");
+
+    const ctx1 = makeCtx("session");
+    apply(ctx1);
+    assert.equal(ctx1.effects.length, 2, "session 态只有 RPC 路由 + 收尾两个 effect");
+    assert.ok(ctx1.effects.some((e) => e.label.includes("RPC route")), "RPC 路由经 ctx.effect 注册");
+    assert.ok(
+      !ctx1.effects.some((e) => e.label.includes("owner credential provider")),
+      "session 态不注册 provider",
+    );
+
+    const ctx2 = makeCtx("session");
+    apply(ctx2);
+    assert.equal(ctx2.effects.length, 0, "第二个实例零注册（effect）");
+
+    const teardown = ctx1.effects.find((e) => e.label.includes("teardown"))!.disposer as () => Promise<void>;
+    await teardown();
+
+    const ctx3 = makeCtx("session");
+    apply(ctx3);
+    assert.equal(ctx3.effects.length, 2, "收尾复位后第三个实例重新注册");
+
+    const teardown3 = ctx3.effects.find((e) => e.label.includes("teardown"))!.disposer as () => Promise<void>;
+    await teardown3();
   } finally {
     process.env.HOME = prevHome;
     await rm(home, { recursive: true, force: true });

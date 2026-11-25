@@ -10,7 +10,7 @@ Right after installing or upgrading, the plugin page may report an error such as
 
 ## Compatibility
 
-This release needs **DSH `0.2.2-rc.2` or newer**. On an older DSH install `dsh-whale-link@0.16.0` instead: `0.17.x` stays inactive there, and `0.16.x` exits DSH at startup on `0.2.2-rc.2` and later.
+This release needs **DSH `0.2.2-rc.2` or newer**. It supports both authentication generations — the `0.2.2-rc.x` release line (launch-token session cookie) and DSH `0.2.3`+ (Connection authentication providers) — so no version pin is needed between them. On an older DSH install `dsh-whale-link@0.16.0` instead: `0.17.x` stays inactive there, and `0.16.x` exits DSH at startup on `0.2.2-rc.2` and later.
 
 Which release runs on which DSH: `docs/COMPATIBILITY.md` (Chinese: `docs/COMPATIBILITY.zh.md`). This page renders a relative link as plain text; the file ships inside the installed package.
 

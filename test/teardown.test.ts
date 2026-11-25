@@ -18,14 +18,36 @@ interface FakeWebServer {
   register: () => () => void;
 }
 
-function makeCtx(onRegister: () => void, onProviderDisposed: () => void = () => {}): Context {
+type Shape = "provider" | "session";
+
+function makeCtx(
+  shape: Shape,
+  onRegister: () => void,
+  onProviderDisposed: () => void = () => {},
+  onRouteDisposed: () => void = () => {},
+): Context {
   const ctx = new Context();
-  const webServer: FakeWebServer = { port: 0, register: () => { onRegister(); return () => {}; } };
+  const webServer: FakeWebServer = {
+    port: 0,
+    register: () => {
+      onRegister();
+      return () => { onRouteDisposed(); };
+    },
+  };
   ctx.provide("webServer", webServer);
-  ctx.provide("connection", {
-    createPeer: () => ({ principal: { kind: "owner" } }),
-    authentication: { register: () => () => { onProviderDisposed(); } },
-  });
+  if (shape === "provider") {
+    // Master exposes the credential registry as the nested service
+    // `connection.authentication`; the plugin reads it via `ctx.get`.
+    ctx.provide("connection", { createPeer: () => ({ principal: { kind: "owner" } }) });
+    ctx.provide("connection.authentication", { register: () => () => { onProviderDisposed(); } });
+  } else {
+    // Release line: no provider registry; the session path uses these two methods.
+    ctx.provide("connection", {
+      createPeer: () => ({ principal: { kind: "owner" } }),
+      authenticatedUrl: (base: string) => `${base}/?no-token=1`,
+      requestRejection: () => undefined,
+    });
+  }
   return ctx;
 }
 
@@ -40,12 +62,12 @@ test("真实 cordis：fiber.dispose() 执行收尾 disposer 并复位单例", as
     let registerCount = 0;
     let providerDisposals = 0;
 
-    const ctx1 = makeCtx(() => { registerCount += 1; }, () => { providerDisposals += 1; });
+    const ctx1 = makeCtx("provider", () => { registerCount += 1; }, () => { providerDisposals += 1; });
     apply(ctx1 as unknown as ApplyCtx);
     assert.equal(registerCount, 1, "第一个实例注册 RPC 路由");
     assert.equal(providerDisposals, 0, "provider 在 apply 阶段不撤销");
 
-    const ctx2 = makeCtx(() => { registerCount += 1; });
+    const ctx2 = makeCtx("provider", () => { registerCount += 1; });
     apply(ctx2 as unknown as ApplyCtx);
     assert.equal(registerCount, 1, "第二个实例被单例拦住，零注册");
 
@@ -54,12 +76,43 @@ test("真实 cordis：fiber.dispose() 执行收尾 disposer 并复位单例", as
     await ctx1.fiber.dispose();
     assert.equal(providerDisposals, 1, "fiber dispose 撤销凭据 provider（注册归属插件 fiber）");
 
-    const ctx3 = makeCtx(() => { registerCount += 1; }, () => { providerDisposals += 1; });
+    const ctx3 = makeCtx("provider", () => { registerCount += 1; }, () => { providerDisposals += 1; });
     apply(ctx3 as unknown as ApplyCtx);
     assert.equal(registerCount, 2, "dispose 后单例已复位，第三个实例重新注册");
 
     await ctx3.fiber.dispose();
     assert.equal(providerDisposals, 2, "第三个实例的 provider 同样随 fiber 撤销");
+  } finally {
+    process.env.HOME = prevHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("session 态：路由随 fiber 撤销，且不注册 provider", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rdsh-teardown-session-"));
+  const prevHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const { apply } = await import("../src/index.ts");
+    type ApplyCtx = Parameters<typeof apply>[0];
+
+    let registerCount = 0;
+    let routeDisposals = 0;
+    let providerDisposals = 0;
+
+    const ctx = makeCtx(
+      "session",
+      () => { registerCount += 1; },
+      () => { providerDisposals += 1; },
+      () => { routeDisposals += 1; },
+    );
+    apply(ctx as unknown as ApplyCtx);
+    assert.equal(registerCount, 1, "session 态仍注册 RPC 路由");
+    assert.equal(providerDisposals, 0, "session 态没有 provider 可撤销");
+
+    await ctx.fiber.dispose();
+    assert.equal(routeDisposals, 1, "fiber dispose 撤销 RPC 路由");
+    assert.equal(providerDisposals, 0, "session 态始终不注册 provider");
   } finally {
     process.env.HOME = prevHome;
     await rm(home, { recursive: true, force: true });

@@ -1,14 +1,15 @@
 /**
- * The plugin's own owner credential for requests forwarded to the local dsh.
+ * The plugin's own owner credential for requests forwarded to the local dsh
+ * (provider generation only).
  *
- * dsh `0.2.2-rc.2` removed `connection.authenticatedUrl`, which this plugin used
- * to exchange dsh's launch token for a browser-session Cookie, and it moved
- * every WebServer route behind Connection's authentication providers. The
- * tunnel still has to authenticate the requests it forwards to the local dsh,
- * so the plugin mints a per-process secret, forwards it as a Cookie segment on
- * those requests (the gateway treats `dshAuthCookieHeader` opaquely), and
- * registers an `AuthenticationProvider` that maps exactly that Cookie to its
- * owner Peer.
+ * DSH master removed `connection.authenticatedUrl` and put every WebServer route
+ * behind Connection's authentication providers, so on that generation the
+ * tunnel authenticates its forwarded requests with a per-process secret: the
+ * plugin mints it, forwards it as a Cookie segment (the gateway treats
+ * `dshAuthCookieHeader` opaquely), and registers an `AuthenticationProvider`
+ * that maps exactly that Cookie to its owner Peer. The `0.2.2-rc.x` release line
+ * still has `authenticatedUrl`/`requestRejection`, so it uses a
+ * browser-session Cookie instead and does not use this module's provider.
  *
  * The module owns the credential format and its comparison only, so the
  * contract is unit-testable without a tunnel or a Cordis context.

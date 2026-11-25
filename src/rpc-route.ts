@@ -12,11 +12,13 @@
  * answering with a `server-response` envelope — so the browser half is
  * unchanged.
  *
- * Admission belongs to the caller: the route is registered with WebServer's
- * `auth: 'required'`, which DSH resolves through Connection's
- * `webserver/authorize` (source fence plus credential providers) before this
- * handler runs. Since dsh `0.2.2-rc.2` there is no `connection.requestRejection`
- * to call here, and this module must not widen the route's admission policy.
+ * Admission belongs to the caller and is generation-specific: on DSH master the
+ * route is registered with WebServer's `auth: 'required'` and DSH resolves it
+ * through Connection's `webserver/authorize` (source fence plus credential
+ * providers); on the `0.2.2-rc.x` release line WebServer ignores `auth`, so
+ * `src/index.ts` calls `Connection.requestRejection` in the route handler
+ * before delegating here. This module owns the envelope/status semantics only
+ * and must not add its own admission policy.
  *
  * The status semantics mirror `dsh-client-connection`'s `rpcFetchHandler`:
  * 404 wrong method/endpoint, 415 wrong content type, 400 unparsable body,

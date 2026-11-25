@@ -3,6 +3,38 @@
 All notable changes to this project are documented in this file. Versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [0.17.1] — 2026-11-25
+
+### Fixed
+
+- On the DSH `0.2.2-rc.2`..`rc.5` release line the plugin stayed inactive
+  (`pending (waiting for service: connection.authentication)`): its `inject`
+  required a service only DSH master ships. The panel showed "not joined" and
+  "Scan to connect" did nothing.
+- `inject` no longer names `connection.authentication`; the authentication
+  generation is detected from the services the running DSH exposes, never from a
+  version string.
+
+### Changed
+
+- Two authentication generations are supported in one release:
+  - master (`0.2.3+`): a plugin-owned owner credential registered as a
+    `connection.authentication` provider; route admission stays with WebServer's
+    `auth: 'required'`.
+  - release line (`0.2.2-rc.x`): the process launch token is exchanged for a DSH
+    browser-session cookie with `exchangeDshSessionCookie`, and the route calls
+    `Connection.requestRejection` itself because that WebServer ignores `auth`.
+  - neither: the plugin stays active, serves only the read-only `state` endpoint
+    so the panel can show the reason, and refuses every other endpoint with 503.
+- The tunnel and the LAN-direct listener are not started when the forwarding
+  credential cannot be minted; `connect` reports `dsh-auth` instead.
+
+### Docs
+
+- `docs/COMPATIBILITY.md` and `docs/COMPATIBILITY.zh.md`: "Tested with DSH" now
+  means the plugin was activated and `/remote-access` answered, not merely that
+  DSH booted; the `0.17.0` row records its `pending` state on the release line.
+
 ## [0.17.0] — 2026-11-16
 
 ### Breaking
@@ -12,6 +44,12 @@ follow [Semantic Versioning](https://semver.org/).
 - Route admission now comes from DSH's WebServer policy (`auth: 'required'`)
   instead of the removed `Connection.requestRejection` call. Source/Origin
   checking itself is unchanged — both paths use DSH's own fence.
+
+> **Corrigendum (2026-11-25)**: the two removals above apply to DSH **master**
+> only. The `0.2.2-rc.2`..`rc.5` release line still ships both
+> `Connection.requestRejection` and `Connection.authenticatedUrl` and has no
+> `connection.authentication`, so `0.17.0` stayed inactive (`pending`) there.
+> `0.17.1` supports both generations.
 
 ### Changed
 

@@ -12,12 +12,14 @@
  * `webServer` for third-party plugins and aborts the whole plugin tree
  * (upstream regression, deepseek-harness discussion #5926).
  *
- * Admission is DSH's: the route declares `auth: 'required'`, so WebServer's
- * `webserver/authorize` (source fence plus Connection's credential providers)
- * runs before the handler. The tunnel and LAN-direct ports forward to
- * `127.0.0.1:<webServer.port>`, so this plugin registers its own owner credential
- * provider (`./peer-credential.ts`); since dsh 0.2.2-rc.2 there is no
- * `connection.authenticatedUrl` to borrow the launch token from.
+ * Admission has two generation-specific paths, chosen by `authGenerationOf`:
+ * - DSH master (0.2.3+): the route declares `auth: 'required'`, so WebServer's
+ *   `webserver/authorize` (source fence plus Connection's credential providers)
+ *   runs before the handler; the plugin registers its own owner credential
+ *   provider (`./peer-credential.ts`).
+ * - DSH 0.2.2-rc.2..rc.5: WebServer ignores the `auth` field, so the handler
+ *   calls `connection.requestRejection` itself, and the tunnel/LAN-direct ports
+ *   forward a browser-session Cookie minted from this process's launch token.
  *
  * Function-plugin form (export `inject` + `apply`) — no `@deepseek-ai/cordis`
  * runtime import, only a minimal local `Ctx` type.
@@ -48,6 +50,7 @@ import {
   UsageReporter,
   writeHostMeta,
   gatewayVersion,
+  exchangeDshSessionCookie,
 } from "rdsh-gateway";
 import type { DirectHandle, DirectOptions, DirectTicketManager, JoinHandle, JoinState, RdshConfig, UsageMeter } from "rdsh-gateway";
 import { RPC_CHANNEL, handleRpcRoute } from "./rpc-route.ts";
@@ -94,12 +97,16 @@ interface AuthenticationService {
   register(provider: AuthenticationProviderLike): unknown;
 }
 
-/** The slice of the DSH connection service this plugin uses. */
+/** The slice of the DSH connection service this plugin uses across two API generations. */
 interface ConnectionService {
-  /** Create the plugin-owned owner Peer admitted for the forwarded credential. */
+  /** Create the plugin-owned owner Peer admitted for the forwarded credential (provider generation). */
   createPeer(options: { principal: { kind: "owner" } }): PeerLike;
-  /** Ordered credential verifiers; the tunnel's Cookie is accepted here. */
-  authentication: AuthenticationService;
+  /** 0.2.2-rc.x: add this process's launch token to an application URL; removed on master. */
+  authenticatedUrl?(baseUrl: string): string;
+  /** 0.2.2-rc.x: Host/Origin fence plus browser-session admission; removed on master. */
+  requestRejection?(request: {
+    readonly headers: Record<string, string | readonly string[] | undefined>;
+  }): 401 | 403 | undefined;
 }
 
 interface Ctx {
@@ -112,6 +119,30 @@ interface Ctx {
    * 做只读诊断——本插件不 inject 它，避免没有选择器的组合把插件树拖垮。
    */
   get(name: string): unknown;
+}
+
+/** Which Connection authentication generation this DSH build exposes. */
+type AuthGeneration = "provider" | "session" | "unsupported";
+
+/**
+ * Pick the authentication generation by capability, never by version string
+ * (the release line and master carry overlapping version numbers).
+ *
+ * ⚠ Read the provider service through `ctx.get`: some Cordis builds redirect
+ * `ctx.connection.authentication` to a dotted service access that requires an
+ * `inject` declaration and throws without it, which would park the plugin in
+ * `pending` again on the release line.
+ * @param ctx - plugin context.
+ * @returns the generation whose wiring `apply` should install.
+ */
+function authGenerationOf(ctx: Ctx): AuthGeneration {
+  const provider = ctx.get("connection.authentication") as AuthenticationService | undefined;
+  if (typeof provider?.register === "function" && typeof ctx.connection.createPeer === "function") return "provider";
+  if (
+    typeof ctx.connection.authenticatedUrl === "function"
+    && typeof ctx.connection.requestRejection === "function"
+  ) return "session";
+  return "unsupported";
 }
 
 /** `directoryPicker` 服务的最小形状（只读 kind，避免依赖上游类型包）。 */
@@ -164,7 +195,7 @@ function mapState(s: JoinState): Status {
   }
 }
 
-export const inject = ["connection", "connection.authentication", "webServer"];
+export const inject = ["connection", "webServer"];
 
 /**
  * 单例守卫：桌面壳会在同一进程里 apply 本插件两次（组合配置只有一行，重复来自宿主）。
@@ -198,29 +229,6 @@ async function startDirectWithRetry(opts: DirectOptions): Promise<DirectHandle> 
 export function apply(ctx: Ctx): void {
   if (applied) return;
   /**
-   * 本进程的 owner 凭据（见 `./peer-credential.ts`）。
-   *
-   * 隧道与直连口把 `cookieHeader` 注入到转发到本进程 dsh 的每个请求；下面注册的
-   * provider 把同一个 Cookie 换成本插件的 owner Peer，DSH 的 `webserver/authorize`
-   * 据此放行。0.2.2-rc.2 起 `connection.authenticatedUrl` 已删除，无法再借 DSH 的
-   * 启动令牌，所以凭据归插件自己所有。
-   *
-   * `inject` 声明了 `connection.authentication`：旧版 DSH 没有这个服务，插件会停在
-   * 未激活（`engines.dsh` 负责让安装器直接拒绝）。Peer 与 provider 都归本 Context，
-   * 插件卸载时一并撤销 —— provider 用 `ctx.effect` 显式包裹，与路由注册同构，
-   * 也让测试能证明撤销确实发生在插件 fiber 上。
-   */
-  const credential = createPeerCredential();
-  const dshAuthCookieHeader: string = credential.cookieHeader;
-  const peer = ctx.connection.createPeer({ principal: { kind: "owner" } });
-  ctx.effect(
-    () =>
-      ctx.connection.authentication.register({
-        authenticate: (request) => (credential.accepts(request) ? peer : undefined),
-      }),
-    "dsh-whale-link: owner credential provider",
-  );
-  /**
    * 用量上报器：**归插件进程**，不随隧道 handle 走。
    *
    * 直连口按设计比隧道活得久（`disconnect` 只停隧道），而 `startTunnel` 每次重连都会
@@ -246,6 +254,78 @@ export function apply(ctx: Ctx): void {
   let bindSession: { bindId: string; consumeToken: string; hub: string; name: string; insecure: boolean; expiresAt: number } | null = null; // 扫码绑定会话（26）
   let directAccessCode: string | null | undefined = undefined; // 直连口当前应用的口令（undefined=未启动）
   let directMeter: UsageMeter | undefined; // 直连口当前挂的 meter（undefined=没挂，尚未接 hub）
+
+  /**
+   * 双代认证接线（见 doc/fix/20261125-whale-link-dsh-0.2.2-rc.5-pending/solution.md）。
+   *
+   * - provider 代（DSH master / 0.2.3+）：插件自铸 owner 凭据，注册
+   *   `connection.authentication` provider；转发请求带该 Cookie，准入由 DSH 的
+   *   `webserver/authorize` 完成。
+   * - session 代（0.2.2-rc.2～rc.5 发布线）：没有 provider 注册表，用本进程启动令牌
+   *   经 `GET /?token=` 换一张 DSH 浏览器会话 cookie；路由准入自己调
+   *   `requestRejection`（该代 WebServer 不处理 `auth` 字段）。
+   * - 两代都没有：插件保持激活，只放行只读 `state`（见路由 guard），面板显示原因。
+   *
+   * 代际只看能力、不看版本号；provider 服务用 `ctx.get` 读，避免 Cordis 把
+   * `ctx.connection.authentication` 重定向成点号服务访问而要求 inject。
+   */
+  const generation = authGenerationOf(ctx);
+  /** 转发到本进程 dsh 的 Cookie 段：provider 代=插件凭据；session 代=换发结果；其它=null。 */
+  let dshAuthCookieHeader: string | null = null;
+  let cookieTask: Promise<string | null> | null = null;
+  /** session 代换发失败的可见原因（换发成功后清掉，避免误导后续失败）。 */
+  const SESSION_AUTH_FAILED_MESSAGE = "无法取得 DSH 会话凭据（启动令牌换发失败），远程访问暂不可用";
+
+  if (generation === "provider") {
+    const credential = createPeerCredential();
+    dshAuthCookieHeader = credential.cookieHeader;
+    const provider = ctx.get("connection.authentication") as AuthenticationService;
+    const peer = ctx.connection.createPeer({ principal: { kind: "owner" } });
+    ctx.effect(
+      () => provider.register({ authenticate: (request) => (credential.accepts(request) ? peer : undefined) }),
+      "dsh-whale-link: owner credential provider",
+    );
+  } else if (generation === "session") {
+    cookieTask = startSessionCookieExchange();
+  } else {
+    // 未识别的 DSH 认证代际：插件保持激活，只放行只读 state（见路由 guard）；
+    // 面板经 state 读到下面的原因，宿主 stderr 同样留一条（logger 是 Context 自有属性，
+    // 不经 reflect.provide，`ctx.get("logger")` 取不到，所以这里用 console）。
+    lastMessage = "当前 DSH 的 Connection 认证接口无法识别，远程访问不可用（请升级 dsh-whale-link）";
+    console.warn("dsh-whale-link: unsupported DSH Connection authentication generation");
+  }
+
+  /**
+   * 用本进程启动令牌换一次 DSH 浏览器会话 cookie（session 代专用）。
+   * 失败（无令牌 / 服务端不回 cookie / 网络错误）返回 null，由调用方决定不建隧道。
+   */
+  function startSessionCookieExchange(): Promise<string | null> {
+    if (typeof ctx.connection.authenticatedUrl !== "function") return Promise.resolve(null);
+    try {
+      const url = ctx.connection.authenticatedUrl(`http://127.0.0.1:${ctx.webServer.port}`);
+      const token = new URL(url).searchParams.get("token");
+      if (token === null) return Promise.resolve(null);
+      return exchangeDshSessionCookie(ctx.webServer.port, token).then((cookie) => {
+        if (cookie !== null) dshAuthCookieHeader = cookie;
+        return cookie;
+      });
+    } catch {
+      return Promise.resolve(null);
+    }
+  }
+
+  /** 取（或重试）转发凭据；session 代失败返回 null，并在 lastMessage 里留下原因。 */
+  async function ensureAuthCookie(): Promise<string | null> {
+    if (generation !== "session") return dshAuthCookieHeader;
+    if (dshAuthCookieHeader !== null) return dshAuthCookieHeader;
+    cookieTask ??= startSessionCookieExchange();
+    const task = cookieTask;
+    const cookie = await task;
+    if (cookieTask === task) cookieTask = null; // 失败允许下一次接入重试
+    if (cookie === null) lastMessage = SESSION_AUTH_FAILED_MESSAGE;
+    else if (lastMessage === SESSION_AUTH_FAILED_MESSAGE) lastMessage = undefined;
+    return cookie;
+  }
 
   const hooks = {
     onState: (s: JoinState, detail?: { message?: string; delayMs?: number }): void => {
@@ -307,6 +387,11 @@ export function apply(ctx: Ctx): void {
       // D5 档1：覆盖 lan/cloud 配置需显式确认
       if ((await needsOverwriteConfirm()) && args.confirmOverwrite !== true) {
         return err("mode-conflict", "host.json is not in join mode; re-send with confirmOverwrite: true to overwrite");
+      }
+
+      // 双代转发凭据：session 代要先换发 DSH 会话 cookie；拿不到就不建隧道（否则远端必然 401）。
+      if ((await ensureAuthCookie()) === null) {
+        return err("dsh-auth", "DSH session credential unavailable");
       }
 
       // 注册（join token → host token）或复用持久化 host token；留空 = 复用
@@ -382,6 +467,9 @@ export function apply(ctx: Ctx): void {
         config.insecure = insecure;
         await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
         bindSession = null;
+        if ((await ensureAuthCookie()) === null) {
+          return err("dsh-auth", "DSH session credential unavailable");
+        }
         startTunnel(config, hub, cj.hostToken, name, insecure);
         return ok({ status: "connecting", hub, name });
       }
@@ -453,6 +541,8 @@ export function apply(ctx: Ctx): void {
     // 整函数包 try：本函数由 `void syncDirect(...)` 触发，任何漏出的异常都会变成未捕获
     // rejection（宿主可能静默吞掉）→ 直连口永远起不来且毫无线索。
     try {
+      // 转发凭据拿不到就不启动直连口（session 代换发失败 / 未识别的代际）。
+      if ((await ensureAuthCookie()) === null) return;
       if (directSecret === null) directSecret = loadOrCreateDirectSecret();
       const code = config.gateway?.accessCode ?? null;
       const meter = reporter?.meter;
@@ -525,6 +615,8 @@ export function apply(ctx: Ctx): void {
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
       if (config.mode !== "join" || typeof config.hub !== "string" || config.hub === "") return;
       if (readPersistedToken(config.hub) === null) return;
+      // 凭据拿不到就不建隧道（session 代换发失败 / 未识别的代际）；lastMessage 已由对应路径写好。
+      if ((await ensureAuthCookie()) === null) return;
       const { token: hostToken, insecure, name: joinedName } = await registerJoin({
         hubUrl: config.hub,
         name: config.name,
@@ -779,11 +871,35 @@ export function apply(ctx: Ctx): void {
       ctx.webServer.register({
         kind: "prefix",
         path: RPC_CHANNEL,
+        // master 代由 WebServer 按 required 准入（provider 已在上面注册）；
+        // 0.2.2-rc.x 的 WebServer 忽略该字段，准入由下面的 handler 自己完成。
         auth: "required",
         // Return the promise: WebServer awaits it and contains a throwing handler
         // (400 + warning). A discarded rejection becomes an unhandled rejection,
         // which DSH reports as a fatal load failure and exits.
-        handler: (req, res) => handleRpcRoute(req, res, dispatch),
+        handler: (req, res) => {
+          if (generation === "session") {
+            // 旧代：路由 `auth` 不生效，用 DSH 官方围栏 + 浏览器会话校验做准入。
+            const rejection = ctx.connection.requestRejection!({ headers: req.headers });
+            if (rejection !== undefined) {
+              res.writeHead(rejection, { "content-type": "text/plain" });
+              res.end(rejection === 401 ? "unauthorized" : "forbidden");
+              return;
+            }
+          } else if (generation === "unsupported") {
+            // 未识别的代际：只放行本机（loopback）对只读 state 的访问，面板据此显示原因；
+            // 其余端点/来源一律 503。该态没有隧道凭据，远端本就不可达。
+            const pathname = new URL(req.url ?? "/", "http://dsh.internal").pathname;
+            const remote = req.socket.remoteAddress;
+            const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+            if (pathname !== `${RPC_CHANNEL}/state` || !loopback) {
+              res.writeHead(503, { "content-type": "text/plain" });
+              res.end("authentication unavailable");
+              return;
+            }
+          }
+          return handleRpcRoute(req, res, dispatch);
+        },
       }),
     `dsh-whale-link: ${RPC_CHANNEL} RPC route`,
   );
