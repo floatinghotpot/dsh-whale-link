@@ -4,7 +4,7 @@
 
 | 插件 | DSH 要求 | 实测通过 | 说明 |
 |---|---|---|---|
-| `0.17.x` | `>=0.2.2-rc.2`（`engines.dsh`） | `0.2.2-rc.5`、`0.2.3-alpha.2` | 双代认证：`0.2.2-rc.x` 用启动令牌换发会话 cookie 并自行准入路由；`0.2.3+` 注册 `connection.authentication` provider，路由准入交给 WebServer 的 `auth: 'required'`。 |
+| `0.17.x` | `>=0.2.2-rc.2`（`engines.dsh`） | `0.2.2-rc.5`、`0.2.3-alpha.2` | 双代认证：`0.2.2-rc.x` 用启动令牌换发会话 cookie 并自行准入路由；`0.2.3+` 注册 `connection.authentication` provider，路由准入交给 WebServer 的 `auth: 'required'`。`0.17.2` 修复注销可靠性；认证路径未变。 |
 | `0.17.0` | `>=0.2.2-rc.2`（`engines.dsh`） | —（发布线上不激活） | 只用 provider API。在 `0.2.2-rc.2`～`rc.5` 上插件停在 `pending`；请升级到 `0.17.1`。 |
 | `0.16.x` | 未声明 | `0.1.2-rc.1`、`0.1.5-rc.2`、`0.1.7-rc.1`、`0.2.2-rc.1` | 没有 `engines.dsh`，没有任何环节会拦住它；在 `0.2.2-rc.2` 及以后启动即让 DSH 退出。这些版本请用 `0.17.x`。 |
 

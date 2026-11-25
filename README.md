@@ -126,6 +126,7 @@ Only reach for the panel to pause or unbind:
 | Connecting… / Reconnecting… | Establishing the tunnel, or auto-recovering after a drop |
 | Connected | Reachable from outside right now |
 | Disconnected (config kept) | Joined before, currently paused |
+| Revoking… | Removing the binding; controls are disabled until it finishes |
 | Managed by another instance on this machine | The `rdsh` CLI or another DSH runs the tunnel; the panel is read-only |
 
 ## Where your data lives

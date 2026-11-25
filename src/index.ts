@@ -57,10 +57,11 @@ import { RPC_CHANNEL, handleRpcRoute } from "./rpc-route.ts";
 import type { RpcDispatch, RpcResult, WebServerService } from "./rpc-route.ts";
 import { createPeerCredential } from "./peer-credential.ts";
 import type { CredentialRequest } from "./peer-credential.ts";
+import { performRevoke } from "./revoke-flow.ts";
 import { classifyHolder, scanPluginInstalls, uninstallCommand } from "./lock-diagnostics.ts";
 
-/** 面板状态（client 半 §2 五态 + 断开后态） */
-export type Status = "unconfigured" | "disconnected" | "connecting" | "connected" | "reconnecting" | "external";
+/** 面板状态（client 半五态 + 断开后态 + 注销中） */
+export type Status = "unconfigured" | "disconnected" | "connecting" | "connected" | "reconnecting" | "external" | "revoking";
 
 /** 本插件的包名 + 版本号（读自身的 package.json）；读不到时回落默认值。 */
 const PLUGIN_META: { name: string; version: string } = (() => {
@@ -210,6 +211,9 @@ const EADDRINUSE_RETRY_DELAYS_MS = [500, 1000, 2000];
 /** 收尾时 hub 上报类操作的上限：`hubRequest` 默认 10s 超时，会吃满桌面端 10s 优雅窗口。 */
 const TEARDOWN_FLUSH_BUDGET_MS = 1500;
 
+/** 注销时等待 hub 侧确认的上限：超时按失败提示，但不阻塞本地注销。 */
+const REVOKE_HUB_TIMEOUT_MS = 3_000;
+
 /** 起直连口；撞 EADDRINUSE（上一实例异步释放端口期间）按退避间隔重试，最终失败则抛给 syncDirect 降级。 */
 async function startDirectWithRetry(opts: DirectOptions): Promise<DirectHandle> {
   for (let attempt = 0; attempt <= EADDRINUSE_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -254,6 +258,10 @@ export function apply(ctx: Ctx): void {
   let bindSession: { bindId: string; consumeToken: string; hub: string; name: string; insecure: boolean; expiresAt: number } | null = null; // 扫码绑定会话（26）
   let directAccessCode: string | null | undefined = undefined; // 直连口当前应用的口令（undefined=未启动）
   let directMeter: UsageMeter | undefined; // 直连口当前挂的 meter（undefined=没挂，尚未接 hub）
+  /** 注销进行中：禁止任何入口再启动隧道/直连口，避免复用旧 token 直连。 */
+  let revoking = false;
+  /** 一次接入的启动段（connect / scanState approved / autoConnect）是否在进行：与 revoke 互斥。 */
+  let starting = false;
 
   /**
    * 双代认证接线（见 doc/fix/20261125-whale-link-dsh-0.2.2-rc.5-pending/solution.md）。
@@ -358,6 +366,8 @@ export function apply(ctx: Ctx): void {
 
   async function connect(args: Record<string, unknown>): Promise<RpcResult> {
     try {
+      // 注销进行中：拒绝任何接入请求（否则会复用持久化 token 直连）。
+      if (revoking) return err("revoking", "revoke in progress; retry shortly");
       if (typeof args.hub !== "string" || args.hub.trim() === "") {
         return err("bad-request", "hub (string) required");
       }
@@ -390,24 +400,33 @@ export function apply(ctx: Ctx): void {
       }
 
       // 双代转发凭据：session 代要先换发 DSH 会话 cookie；拿不到就不建隧道（否则远端必然 401）。
-      if ((await ensureAuthCookie()) === null) {
-        return err("dsh-auth", "DSH session credential unavailable");
+      // 启动段与注销互斥：领取凭据/注册/写 join 配置/起隧道期间不允许注销，
+      // 注销也不允许在这里并发启动（否则会把刚写好的 lan 覆盖回 join）。
+      if (revoking) return err("revoking", "revoke in progress; retry shortly");
+      if (starting) return err("busy", "another join is in progress; retry shortly");
+      starting = true;
+      try {
+        if ((await ensureAuthCookie()) === null) {
+          return err("dsh-auth", "DSH session credential unavailable");
+        }
+
+        // 注册（join token → host token）或复用持久化 host token；留空 = 复用
+        const { token: hostToken, insecure, name: joinedName } = await registerJoin({ hubUrl: hub, token, name });
+
+        // 写 host.json（mode join）
+        const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
+        config.mode = "join";
+        config.hub = hub;
+        config.name = joinedName;
+        config.insecure = insecure;
+        await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
+
+        // 起隧道：转发到本进程 dsh
+        startTunnel(config, hub, hostToken, joinedName, insecure);
+        return ok({ status: "connecting", hub, name });
+      } finally {
+        starting = false;
       }
-
-      // 注册（join token → host token）或复用持久化 host token；留空 = 复用
-      const { token: hostToken, insecure, name: joinedName } = await registerJoin({ hubUrl: hub, token, name });
-
-      // 写 host.json（mode join）
-      const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
-      config.mode = "join";
-      config.hub = hub;
-      config.name = joinedName;
-      config.insecure = insecure;
-      await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
-
-      // 起隧道：转发到本进程 dsh
-      startTunnel(config, hub, hostToken, joinedName, insecure);
-      return ok({ status: "connecting", hub, name });
     } catch (e) {
       return err("register-failed", e instanceof Error ? e.message : String(e));
     }
@@ -416,6 +435,9 @@ export function apply(ctx: Ctx): void {
   /** 扫码绑定：向 hub 申请一次性绑定会话，返回二维码与 consumeToken（26）。 */
   async function beginScan(args: Record<string, unknown>): Promise<RpcResult> {
     try {
+      // 注销进行中 / 另一次接入正在启动：不新建扫码会话（否则可能被注销后的轮询消费）。
+      if (revoking) return err("revoking", "revoke in progress");
+      if (starting) return err("busy", "another join is in progress; retry shortly");
       if (typeof args.hub !== "string" || args.hub.trim() === "") {
         return err("bad-request", "hub (string) required");
       }
@@ -423,12 +445,15 @@ export function apply(ctx: Ctx): void {
       if (!/^https?:\/\//.test(hub)) return err("bad-request", "hub must be an http(s) URL");
       const name = typeof args.name === "string" && args.name.trim() !== "" ? args.name.trim() : hostname();
       const insecure = await detectInsecure(hub);
+      // 注销可能在网络 await 期间完成：重检，避免注销后写入 bindSession。
+      if (revoking) return err("revoking", "revoke in progress");
       const keys = loadOrCreateE2eeKeyPair();
       const res = await hubRequest(hub, "/api/bind-sessions", {
         method: "POST",
         insecure,
         body: { name, e2eePublicKey: keys.publicRaw.toString("base64url") },
       });
+      if (revoking) return err("revoking", "revoke in progress");
       if (!res.ok) return err("begin-scan-failed", `bind session create failed: ${res.status}`);
       const j = res.body as { bindId: string; consumeToken: string; expiresAt: number; qrDataUri: string | null };
       bindSession = { bindId: j.bindId, consumeToken: j.consumeToken, hub, name, insecure, expiresAt: j.expiresAt };
@@ -441,37 +466,50 @@ export function apply(ctx: Ctx): void {
   /** 扫码绑定：轮询会话状态；approved 后 consume 换 host token 并复用 startTunnel（26）。 */
   async function scanState(): Promise<RpcResult> {
     try {
+      // 注销进行中：不再消费扫码结果（否则会在注销期间拉起隧道）。
+      if (revoking) return err("revoking", "revoke in progress");
       if (bindSession === null) return ok({ status: "none" });
-      const { hub, name, bindId, consumeToken, insecure } = bindSession;
+      const session = bindSession;
+      const { hub, name, bindId, consumeToken, insecure } = session;
       const res = await hubRequest(hub, `/api/bind-sessions/${bindId}`, { method: "GET", insecure });
+      // 注销可能已把 bindSession 置空：身份已变/已清，本轮作废，不消费。
+      if (bindSession !== session) return ok({ status: "none" });
       if (!res.ok) return ok({ status: "pending" }); // 瞬时错误，面板下一轮重试
       const j = res.body as { status: string };
       if (j.status === "approved") {
-        const consumeRes = await hubRequest(hub, `/api/bind-sessions/${bindId}/consume`, {
-          method: "POST",
-          insecure,
-          body: { consumeToken },
-        });
-        if (!consumeRes.ok) {
-          // 领取失败（罕见：会话已过期/已被消费）→ 终止扫码，面板显示"已过期"+刷新
+        // 注销进行中 / 另一次接入正在启动：本轮不消费，交给下一轮（2s 后）。
+        if (revoking) return err("revoking", "revoke in progress");
+        if (starting) return ok({ status: "pending" });
+        starting = true;
+        try {
+          const consumeRes = await hubRequest(hub, `/api/bind-sessions/${bindId}/consume`, {
+            method: "POST",
+            insecure,
+            body: { consumeToken },
+          });
+          if (!consumeRes.ok) {
+            // 领取失败（罕见：会话已过期/已被消费）→ 终止扫码，面板显示"已过期"+刷新
+            bindSession = null;
+            return ok({ status: "expired" });
+          }
+          const cj = consumeRes.body as { hostId: string; hostToken: string };
+          // 持久化 host token（与 registerJoin 一致）→ 断开后「接入」才能复用已存令牌
+          persistToken(hub, cj.hostToken);
+          const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
+          config.mode = "join";
+          config.hub = hub;
+          config.name = name;
+          config.insecure = insecure;
+          await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
           bindSession = null;
-          return ok({ status: "expired" });
+          if ((await ensureAuthCookie()) === null) {
+            return err("dsh-auth", "DSH session credential unavailable");
+          }
+          startTunnel(config, hub, cj.hostToken, name, insecure);
+          return ok({ status: "connecting", hub, name });
+        } finally {
+          starting = false;
         }
-        const cj = consumeRes.body as { hostId: string; hostToken: string };
-        // 持久化 host token（与 registerJoin 一致）→ 断开后「接入」才能复用已存令牌
-        persistToken(hub, cj.hostToken);
-        const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
-        config.mode = "join";
-        config.hub = hub;
-        config.name = name;
-        config.insecure = insecure;
-        await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
-        bindSession = null;
-        if ((await ensureAuthCookie()) === null) {
-          return err("dsh-auth", "DSH session credential unavailable");
-        }
-        startTunnel(config, hub, cj.hostToken, name, insecure);
-        return ok({ status: "connecting", hub, name });
       }
       if (j.status === "expired") {
         bindSession = null;
@@ -502,6 +540,9 @@ export function apply(ctx: Ctx): void {
 
   /** 起隧道并同步面板状态（connect / autoConnect 共用；转发到本进程 dsh）。 */
   function startTunnel(config: RdshConfig, hub: string, token: string, name: string, insecure: boolean): void {
+    // 只判 disposed：三个调用方（connect/scanState/autoConnect）都在置 `starting` 前查过 revoking，
+    // 故 revoking=true 时不会再有「新」调用；在途调用必须被允许完成，否则 connect 会返回 connecting
+    // 却无隧道（revoke 等待的就是这些在途调用，随后会立即拆掉）。
     if (disposed) return;
     currentConfig = config;
     liveCompat = config.dshUiCompat?.trustE2EEAsLoopback !== false;
@@ -541,6 +582,8 @@ export function apply(ctx: Ctx): void {
     // 整函数包 try：本函数由 `void syncDirect(...)` 触发，任何漏出的异常都会变成未捕获
     // rejection（宿主可能静默吞掉）→ 直连口永远起不来且毫无线索。
     try {
+      // 注销进行中不启动/重启直连口（stopDirect 刚把它停掉）。
+      if (revoking) return;
       // 转发凭据拿不到就不启动直连口（session 代换发失败 / 未识别的代际）。
       if ((await ensureAuthCookie()) === null) return;
       if (directSecret === null) directSecret = loadOrCreateDirectSecret();
@@ -603,6 +646,7 @@ export function apply(ctx: Ctx): void {
    */
   async function autoConnect(): Promise<void> {
     try {
+      if (revoking || starting) return;
       if (handle !== null) return;
       // 活锁不接入：他人（CLI / 另一进程）由 state() 显示为 external。
       // 例外是 pid-reuse 残锁（锁里的 pid 被别的进程复用、isAlive 为真）：先 reap 再接入。
@@ -615,13 +659,20 @@ export function apply(ctx: Ctx): void {
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
       if (config.mode !== "join" || typeof config.hub !== "string" || config.hub === "") return;
       if (readPersistedToken(config.hub) === null) return;
-      // 凭据拿不到就不建隧道（session 代换发失败 / 未识别的代际）；lastMessage 已由对应路径写好。
-      if ((await ensureAuthCookie()) === null) return;
-      const { token: hostToken, insecure, name: joinedName } = await registerJoin({
-        hubUrl: config.hub,
-        name: config.name,
-      });
-      startTunnel(config, config.hub, hostToken, joinedName, insecure);
+      // 启动段与注销互斥（autoConnect 也在事件循环里与用户点击并发）。
+      if (revoking || starting) return;
+      starting = true;
+      try {
+        // 凭据拿不到就不建隧道（session 代换发失败 / 未识别的代际）；lastMessage 已由对应路径写好。
+        if ((await ensureAuthCookie()) === null) return;
+        const { token: hostToken, insecure, name: joinedName } = await registerJoin({
+          hubUrl: config.hub,
+          name: config.name,
+        });
+        startTunnel(config, config.hub, hostToken, joinedName, insecure);
+      } finally {
+        starting = false;
+      }
     } catch (e) {
       // 自动接入失败不阻塞面板；用户可手动接入重试。
       // 例外：锁被占用（同机另一实例在跑隧道）必须让用户看见原因 —— 否则表现为
@@ -643,40 +694,69 @@ export function apply(ctx: Ctx): void {
   }
 
   async function revoke(): Promise<RpcResult> {
+    if (revoking) return err("revoking", "revoke already in progress");
+    // 先同步置位：后到的 revoke/connect/scanState/beginScan 立即被拒，state() 立刻返回 revoking，
+    // 与客户端乐观态对齐，也杜绝「两个并发 revoke 都通过入口检查」的双重注销。
+    revoking = true;
+    let teardownStarted = false;
     try {
-      if (handle !== null) {
-        await handle.stop();
-        handle = null;
-        liveState = null;
+      // 放弃未完成的扫码会话，避免注销后下一轮 scan-state 又把它消费成隧道。
+      bindSession = null;
+      // 有界等待在途接入收尾（≤5s）：期间在途 connect/scanState/autoConnect 的 startTunnel 允许完成
+      // （startTunnel 只判 disposed），完成后由本次注销立即拆掉；其写入的 token 由 clearToken 清理。
+      for (let waited = 0; starting && waited < 5_000; waited += 100) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      await stopDirect();
+      if (starting) return err("busy", "a join is still in progress; retry shortly");
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
-      // 先落盘置为 lan（关键）：即便后续失败，也绝不留下「join 模式 + 无 token」的死态
-      //（否则重启后 autoConnect 因无 token 静默跳过、面板永远 disconnected，只能人工重接）。
-      const fresh: RdshConfig = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
-      fresh.mode = "lan";
-      fresh.hub = undefined;
-      fresh.name = undefined;
-      fresh.insecure = undefined;
-      await saveConfig(DEFAULT_HOST_CONFIG_PATH, fresh);
-      // 再清 token + 后台吊销 hub 侧（best-effort，不阻塞面板返回；hub 慢/不可达时不卡 revoke）。
-      if (config.mode === "join" && config.hub !== undefined) {
-        const token = readPersistedToken(config.hub);
-        if (token !== null) {
-          // 后台 best-effort 吊销 hub 侧；失败回写 lastMessage 让用户看到"本地已注销但 hub 侧残留"，
-          // 而不是静默吞掉（否则 hub 残留有效 host token 成孤儿注册）。
-          void selfRevoke(config.hub, token, config.insecure === true).catch((e) => {
-            lastMessage = `hub 侧吊销失败（本地已注销，请稍后重试或联系管理员）：${e instanceof Error ? e.message : String(e)}`;
-          });
-        }
-        clearPersistedToken(config.hub);
-      }
+      const hub = config.mode === "join" ? config.hub : undefined;
+      const token = hub !== undefined ? readPersistedToken(hub) : null;
+      /**
+       * 本地注销优先：stop 失败不阻断写 lan / 清 token；hub 侧有界等待。
+       * 注销期间 state 返回 revoking、connect/scanState/syncDirect 全部拒绝，
+       * 因此不会出现「面板已断开但还能复用旧 token 直连」的窗口。
+       */
+      teardownStarted = true;
+      const outcome = await performRevoke({
+        stopTunnel: async () => {
+          if (handle !== null) await handle.stop({ flushTimeoutMs: TEARDOWN_FLUSH_BUDGET_MS });
+        },
+        stopDirect,
+        saveLan: async () => {
+          // 先落盘置为 lan（关键）：即便后续失败，也绝不留下「join 模式 + 无 token」的死态
+          //（否则重启后 autoConnect 因无 token 静默跳过、面板永远 disconnected，只能人工重接）。
+          const fresh = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
+          fresh.mode = "lan";
+          fresh.hub = undefined;
+          fresh.name = undefined;
+          fresh.insecure = undefined;
+          await saveConfig(DEFAULT_HOST_CONFIG_PATH, fresh);
+        },
+        clearToken: () => {
+          if (hub !== undefined) clearPersistedToken(hub);
+        },
+        selfRevoke: async () => {
+          if (hub !== undefined && token !== null) await selfRevoke(hub, token, config.insecure === true);
+        },
+        hubTimeoutMs: REVOKE_HUB_TIMEOUT_MS,
+      });
       currentHub = undefined;
       currentName = undefined;
-      lastMessage = undefined;
+      lastMessage = outcome.teardownError !== undefined
+        ? `隧道关闭失败（本地已注销，请重启 DSH）：${outcome.teardownError}`
+        : outcome.hubError !== undefined
+          ? `本地已注销，但服务端吊销失败；若该主机仍出现在 App 列表，请手动移除或联系管理员：${outcome.hubError}`
+          : undefined;
       return ok({ status: "unconfigured" });
     } catch (e) {
       return err("revoke-failed", e instanceof Error ? e.message : String(e));
+    } finally {
+      // 已进入 teardown 的话，即使后续步骤失败也不能留下可命中的 handle（否则 connect 幂等分支会谎报已连接）。
+      if (teardownStarted) {
+        handle = null;
+        liveState = null;
+      }
+      revoking = false;
     }
   }
 
@@ -691,6 +771,15 @@ export function apply(ctx: Ctx): void {
         pluginVersion: PLUGIN_META.version,
         direct: { active: directHandle !== null, port: directHandle?.actualPort ?? null },
       };
+      if (revoking) {
+        return ok({
+          status: "revoking",
+          uiCompat: compat,
+          hasAccessCode: accessCodeEnabled(),
+          ...picker,
+          ...meta,
+        });
+      }
       if (handle !== null && liveState !== null) {
         return ok({
           status: mapState(liveState),
@@ -709,6 +798,7 @@ export function apply(ctx: Ctx): void {
         return ok({
           status: "external",
           lock: { role: held.role, pid: held.pid, sameProcess: held.pid === process.pid },
+          message: lastMessage,
           uiCompat: compat,
           hasAccessCode: accessCodeEnabled(),
           ...picker,
@@ -750,6 +840,8 @@ export function apply(ctx: Ctx): void {
 
   async function setAccessCode(args: Record<string, unknown>): Promise<RpcResult> {
     try {
+      // 注销期间禁止 load-modify-save host.json（会与 saveLan 的原子写并发）。
+      if (revoking) return err("revoking", "revoke in progress");
       const raw = args.code;
       // null/undefined = 清除；否则必须是 ≥4 的非空字符串
       let code: string | null;
@@ -778,6 +870,8 @@ export function apply(ctx: Ctx): void {
 
   async function setUiCompat(args: Record<string, unknown>): Promise<RpcResult> {
     try {
+      // 注销期间禁止 load-modify-save host.json（会与 saveLan 的原子写并发）。
+      if (revoking) return err("revoking", "revoke in progress");
       if (typeof args.enabled !== "boolean") return err("bad-request", "enabled (boolean) required");
       // ① 内存即时生效（运行中的隧道；缺省也写入供下次连接）
       liveCompat = args.enabled;

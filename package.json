@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-link",
-  "version": "0.17.1",
+  "version": "0.17.2",
   "description": "WhaleLink remote access for DSH — reach your agent from any browser or the WhaleLink app, no public IP, end-to-end encrypted.",
   "license": "MIT",
   "author": "Liming Xie",

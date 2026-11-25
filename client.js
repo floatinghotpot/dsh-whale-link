@@ -26,6 +26,10 @@ window.__ModuleLoader__.load({
       status_connected: "已连接",
       status_reconnecting: "断线重连…",
       status_external: "已接入（由本机其它实例托管）",
+      status_revoking: "正在注销…",
+      tip_revoking: "正在删除本地绑定并通知服务器，请稍候。",
+      revokeConfirm: "确定要注销这台主机的绑定吗？注销后需要重新扫码或令牌接入。",
+      revokingBusy: "正在注销，请稍候…",
       hubUrl: "云端中转服务器",
       joinToken: "授权令牌",
       name: "这台主机的名称",
@@ -112,6 +116,10 @@ window.__ModuleLoader__.load({
       status_connected: "Connected",
       status_reconnecting: "Reconnecting…",
       status_external: "Managed by another instance on this machine",
+      status_revoking: "Revoking…",
+      tip_revoking: "Removing the local binding and notifying the server. Please wait.",
+      revokeConfirm: "Revoke this host's binding? You will need to scan or paste a token to join again.",
+      revokingBusy: "Revoking, please wait…",
       hubUrl: "Cloud relay server",
       joinToken: "Auth Token",
       name: "This host's name",
@@ -197,6 +205,7 @@ window.__ModuleLoader__.load({
       .dsh-whale-link-dot.connecting{background:var(--dsw-alias-state-warn-primary);animation:dwr-pulse 1s ease-in-out infinite}
       .dsh-whale-link-dot.connected{background:var(--dsw-alias-state-success-primary)}
       .dsh-whale-link-dot.reconnecting{background:var(--dsw-alias-state-error-primary);animation:dwr-pulse 1s ease-in-out infinite}
+      .dsh-whale-link-dot.revoking{background:var(--dsw-alias-state-warn-primary);animation:dwr-pulse 1s ease-in-out infinite}
       @keyframes dwr-pulse{0%,100%{opacity:1}50%{opacity:.35}}
       .dsh-whale-link-msg{margin:0;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:1.5}
       .dsh-whale-link-alert{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:8px;background:var(--dsw-alias-bg-layer-3);box-shadow:inset 0 0 0 1px var(--dsw-alias-state-error-primary);font-size:13px;line-height:1.5}
@@ -327,9 +336,10 @@ window.__ModuleLoader__.load({
       }, [rpc]);
 
       const external = status === "external";
-      const showForm = status === "unconfigured" || status === "disconnected";
-      const showDisconnect = status === "connecting" || status === "connected" || status === "reconnecting";
-      const showRevoke = status === "disconnected" || showDisconnect;
+      const revoking = status === "revoking";
+      const showForm = !revoking && (status === "unconfigured" || status === "disconnected");
+      const showDisconnect = !revoking && (status === "connecting" || status === "connected" || status === "reconnecting");
+      const showRevoke = !revoking && (status === "disconnected" || showDisconnect);
 
       // 带超时的 RPC：服务端偶发不回包时，按钮也不会永久卡在 loading（15s 后按失败处理）。
       const callRpc = async (endpoint, args = {}, ms = 15000) => {
@@ -360,6 +370,9 @@ window.__ModuleLoader__.load({
             } else if (res.error && res.error.code === "lock-busy") {
               // 锁被占用：1s 轮询会把状态翻成 external 并自动诊断，这里不刷英文报错
               setMessage(undefined);
+            } else if (res.error && res.error.code === "revoking") {
+              // 注销进行中（按钮已隐藏，这里是防御性兜底）
+              setMessage(t("revokingBusy"));
             } else {
               setMessage(res.error ? res.error.message : "connect failed");
             }
@@ -376,16 +389,36 @@ window.__ModuleLoader__.load({
       const disconnect = async () => {
         setBusy(true);
         try {
-          await callRpc("disconnect");
+          const res = await callRpc("disconnect");
+          if (!res.ok) setMessage(res.error ? res.error.message : "disconnect failed");
         } finally {
           setBusy(false);
         }
       };
 
       const revoke = async () => {
+        if (!window.confirm(t("revokeConfirm"))) return;
+        // 乐观切换：不等 1s 轮询，立刻进入「正在注销…」并隐藏动作。
+        setStatus("revoking");
         setBusy(true);
         try {
-          await callRpc("revoke");
+          const res = await callRpc("revoke");
+          if (!res.ok) {
+            // 超时视为可能已完成：先复位 UI，再写提示（避免被 resetScan 的 setMessage(undefined) 冲掉）。
+            if (res.error && res.error.code === "timeout") {
+              resetScan();
+              setTokenMode(false);
+              setToken("");
+            }
+            setMessage(res.error ? res.error.message : "revoke failed");
+            return;
+          }
+          // 注销成功：回到扫码入口，清掉残留的令牌表单与上一次的覆盖确认状态。
+          resetScan();
+          setTokenMode(false);
+          setConfirmOverwrite(false);
+          setMessage(undefined);
+          setToken("");
           // 保留服务器地址/主机名，方便直接重新绑定（清空会导致"缺少服务器地址"）
           setHub((h) => (h.trim() === "" ? DEFAULT_HUB : h));
         } finally {
@@ -560,7 +593,7 @@ window.__ModuleLoader__.load({
         };
       }, [scanStatus]);
 
-      const disabled = busy || external;
+      const disabled = busy || external || revoking;
       // 未接入态需要令牌；断开态可留空（复用已保存授权）
       const canConnect = !disabled && hub.trim() !== "" && (status !== "unconfigured" || token.trim() !== "");
       const isUnconfigured = status === "unconfigured";
@@ -651,7 +684,7 @@ window.__ModuleLoader__.load({
         : null;
 
       // 未配置 → 扫码/令牌两条绑定通路；已配置但断开 → 接入（复用已存令牌）+ 注销。
-      const actions = external
+      const actions = external || revoking
         ? null
         : scanning
           ? null // 扫码屏自带按钮

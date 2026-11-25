@@ -3,6 +3,26 @@
 All notable changes to this project are documented in this file. Versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [0.17.2] — 2026-11-25
+
+### Fixed
+
+- Revoking a host no longer leaves a window where "Connect" reuses the saved host
+  token and reconnects without a QR code: a revoke now refuses `connect`,
+  `scanState` and the LAN-direct listener until it finishes, and the panel shows
+  "Revoking…" instead of the misleading "Disconnected (config kept)".
+- A failing tunnel close no longer leaves the idempotent `connect` branch
+  reporting "Connected" after a revoke; the local revoke (write `lan`, delete the
+  token) completes regardless and the failure is shown.
+- `revoke`/`disconnect` failures reach the panel instead of being swallowed, and
+  a successful revoke returns the form to the scan entry point.
+- The hub-side revoke is awaited with a bound instead of fire-and-forget; a
+  failure says the local revoke is done and the host may need manual removal.
+
+### Changed
+
+- New `revoking` plugin status; revoke asks for confirmation first.
+
 ## [0.17.1] — 2026-11-25
 
 ### Fixed

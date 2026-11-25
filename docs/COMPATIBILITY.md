@@ -4,7 +4,7 @@ Which DSH release each `dsh-whale-link` release needs, and which releases it act
 
 | Plugin | DSH requirement | Tested with DSH | Notes |
 |---|---|---|---|
-| `0.17.x` | `>=0.2.2-rc.2` (`engines.dsh`) | `0.2.2-rc.5`, `0.2.3-alpha.2` | Two authentication generations: `0.2.2-rc.x` exchanges the launch token for a session cookie and guards the route itself; `0.2.3+` registers a `connection.authentication` provider and lets WebServer enforce `auth: 'required'`. |
+| `0.17.x` | `>=0.2.2-rc.2` (`engines.dsh`) | `0.2.2-rc.5`, `0.2.3-alpha.2` | Two authentication generations: `0.2.2-rc.x` exchanges the launch token for a session cookie and guards the route itself; `0.2.3+` registers a `connection.authentication` provider and lets WebServer enforce `auth: 'required'`. `0.17.2` fixes revoke reliability; the authentication path is unchanged. |
 | `0.17.0` | `>=0.2.2-rc.2` (`engines.dsh`) | — (inactive on the release line) | Provider API only. On `0.2.2-rc.2`..`rc.5` the plugin stays `pending`; upgrade to `0.17.1`. |
 | `0.16.x` | none declared | `0.1.2-rc.1`, `0.1.5-rc.2`, `0.1.7-rc.1`, `0.2.2-rc.1` | No `engines.dsh`, so nothing refuses it. It exits DSH at startup on `0.2.2-rc.2` and later; use `0.17.x` there. |
 
