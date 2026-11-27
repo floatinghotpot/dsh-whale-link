@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { performRevoke } from "../src/revoke-flow.ts";
 import type { RevokeSteps } from "../src/revoke-flow.ts";
+
+const execFileAsync = promisify(execFile);
 
 /** Build the five steps, recording their order unless an override replaces one. */
 function makeSteps(calls: string[], overrides: Partial<RevokeSteps> = {}): RevokeSteps {
@@ -101,4 +105,25 @@ test("saveLan 失败向外传播，且不再清 token / 调 hub", async () => {
     /disk full/u,
   );
   assert.deepEqual(calls, ["stopTunnel", "stopDirect", "saveLan"]);
+});
+
+test("挂起的 selfRevoke 在没有任何其它句柄时也能超时返回", async () => {
+  // The bound must hold on its own: if its timer does not keep the event loop
+  // alive, an otherwise idle process (here: a child with nothing else pending)
+  // exits before the timeout fires, and the revoke never settles.
+  const moduleUrl = new URL("../src/revoke-flow.ts", import.meta.url).href;
+  const script = `
+    const { performRevoke } = await import(${JSON.stringify(moduleUrl)});
+    const outcome = await performRevoke({
+      stopTunnel: async () => {},
+      stopDirect: async () => {},
+      saveLan: async () => {},
+      clearToken: () => {},
+      selfRevoke: () => new Promise(() => {}),
+      hubTimeoutMs: 30,
+    });
+    console.log("hubError:" + String(outcome.hubError));
+  `;
+  const { stdout } = await execFileAsync(process.execPath, ["--input-type=module", "-e", script]);
+  assert.match(stdout, /hubError:timed out after 30ms/u);
 });

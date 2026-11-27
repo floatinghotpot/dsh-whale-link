@@ -72,6 +72,10 @@ export async function performRevoke(steps: RevokeSteps): Promise<RevokeOutcome> 
  * `Promise.race` keeps both branches handled, so a late rejection of `work`
  * cannot surface as an unhandled rejection that DSH reports as a fatal load
  * failure.
+ *
+ * The timer is deliberately kept ref'd: an unref'd timer lets the event loop
+ * drain first when nothing else is pending, so the bound would never fire and
+ * node:test reports the pending revoke as cancelled instead of failed.
  * @param work - the promise to bound.
  * @param ms - the upper bound in milliseconds.
  */
@@ -82,7 +86,6 @@ async function withTimeout(work: Promise<void>, ms: number): Promise<void> {
       work,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
-        timer.unref?.();
       }),
     ]);
   } finally {
