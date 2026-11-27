@@ -173,7 +173,7 @@ Start there if you want to deploy the service yourself, or avoid the hosted serv
 
 ## Development
 
-Requires **Node.js ≥ 22** and **pnpm ≥ 9**.
+Requires **Node.js ≥ 24.9** and **pnpm ≥ 9** — the floor of the oldest DSH this plugin supports.
 
 ```bash
 pnpm install

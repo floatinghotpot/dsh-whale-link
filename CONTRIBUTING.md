@@ -16,7 +16,7 @@ Thanks for taking the time to contribute.
 
 ## Development setup
 
-Requires Node.js ≥ 22 and pnpm ≥ 9. The test suite runs `.ts` files directly through Node's type stripping, so `pnpm test` needs Node ≥ 22.18 (or `--experimental-strip-types`).
+Requires Node.js ≥ 24.9 — the floor of the oldest DSH this plugin supports (`0.2.2-rc.2`) — and pnpm ≥ 9. The test suite runs `.ts` files directly through Node's type stripping, which Node 24 enables by default.
 
 ```bash
 pnpm install

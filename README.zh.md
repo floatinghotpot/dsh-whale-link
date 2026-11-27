@@ -173,7 +173,7 @@ dsh --profile <name>            # 启动该 profile（等价写法：dsh <name>�
 
 ## 开发
 
-需要 **Node.js ≥ 22** 与 **pnpm ≥ 9**。
+需要 **Node.js ≥ 24.9** 与 **pnpm ≥ 9**（本插件支持的最老 DSH 的 Node 下限）。
 
 ```bash
 pnpm install
